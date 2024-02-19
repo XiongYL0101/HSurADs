@@ -1,0 +1,957 @@
+library(GEOquery)
+library(Biobase)
+library(BiocGenerics)
+library(parallel)
+library(cluster)
+library(factoextra)
+library(FactoMineR)
+library(reshape2)
+library(ggplot2)
+library(reshape)
+library(RColorBrewer)
+library(pheatmap)
+library(ConsensusClusterPlus)
+library(dplyr)
+library(reshape)
+library(survival)
+library(survminer)
+library(parallel)
+library(ggplot2)
+library(ggpubr)
+library(magrittr)
+library(umap)
+library(Rtsne)
+library(Seurat)
+library(dplyr)
+library(cluster)
+library(factoextra)
+library(FactoMineR)
+library(factoextra)
+library(reshape2)
+library(ggplot2)
+library(GSVA)
+library(GSEABase)
+library(msigdbr)
+library(clusterProfiler)
+options(connectionObserver = NULL)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(limma)
+library(edgeR)
+library(RColorBrewer)
+library(pheatmap)
+library(AnnotationDbi)
+library(reshape)
+library(reshape2)
+library(clusterProfiler)
+library(DESeq2)
+library(maftools)
+library(TCGAmutations)
+library(stats)
+library(plyr)
+options(digits=22)
+library(tidyverse)
+library(sva)
+Sys.setenv("VROOM_CONNECTION_SIZE"=99999999)
+
+library(glmnet)
+library(pROC)
+
+
+###输入高增殖亚群signature
+setwd("D:/data/data3/ASPM/Single LUAD")
+ssi4<-read.table("LUAD Highpro.csv",
+               sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+ssi6_list= split(ssi4$ENTREZID,ssi4$Celltype)
+
+options(digits=22)
+
+##输入肺腺癌数据集
+setwd("D:/data/data3/ASPM/Single LUAD")
+
+##参考肺腺癌高增殖亚群临床意义
+##LUAD4<-list(GSE13213,GSE30219,GSE31210,GSE41271,GSE42127,
+##     GSE50081,GSE68465,GSE72094,TCGALUAD)
+
+###最初数据集
+LUAD6<-read.table("NSCLC matrix z new pro.csv",
+                  sep=",",header=TRUE,stringsAsFactors=FALSE)
+LUAD6[c(1:3),c(1:3)]
+
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+
+##新补充数据集
+LUAD6s<-read.table("NSCLC matrix z new pro xiu.csv",
+                  sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+NS1s<-read.table("D:/data/data3/ASPM/Single LUAD/NSCLC clinical xiu.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+LUAD6s[c(1:3),c(1:3)]
+
+
+
+##合并两者共有基因，防止后面有疏漏
+
+gen<-intersect(LUAD6$GeneID,LUAD6s$GeneID)
+
+LUAD6x<-subset(LUAD6,LUAD6$GeneID %in% gen,select=c(1:ncol(LUAD6)))
+
+LUAD6y<-subset(LUAD6s,LUAD6s$GeneID %in% gen,select=c(1:ncol(LUAD6s)))
+
+
+
+tr1<- sample(ncol(LUAD6x),0.6*ncol(LUAD6x))##随机无放抽取
+bc_train <- (colnames(LUAD6x)[-1])[tr1]#60%数据集
+bc_test<-(colnames(LUAD6x)[-1])[-tr1]#40%数据集合
+
+
+
+xu1<-LUAD6x[,c("GeneID",bc_train)]
+
+xu2<-subset(xu1,xu1$GeneID %in% ssi4$ENTREZID,select=c(1:ncol(xu1)))
+
+rownames(xu2)<-xu2$GeneID
+
+LA3<-as.data.frame(t(xu2[,-1]))
+
+LA3$Patients<-rownames(LA3)
+LA4<-merge(NS1[,c("Patients","OS.time","OS.status")],LA3,by=c("Patients"))%>%na.omit()
+LA4<-LA4[complete.cases(LA4$OS.status),]
+LA4<-subset(LA4,LA4$OS.time>0,select=c(1:ncol(LA4))) ##生存时间不能为0
+
+
+##通过随机森林筛选
+library(randomForestSRC)
+library(tidyverse)
+library(ggplot2)
+library(ggvenn)
+library(glmnet)
+library(survival)
+library(xgboost)
+library(ggpubr)
+fit <- rfsrc(Surv(OS.time,OS.status)~., data = LA4[,-1],
+             ntree = 1000, nodesize = 14,
+             splitrule = 'logrank',
+             importance = T,
+             proximity = T,
+             forest = T)
+fit
+#绘制OBB图和VIP图
+plot(fit,sorted=TRUE,verbose=TRUE)
+dev.off()
+
+##绘制重要性变量图
+cc6<-as.data.frame(fit$importance)
+cc6$Name<-rownames(cc6)
+colnames(cc6)<-c("importance","Name")
+cc6n<-bitr(cc6$Name, fromType = "ENTREZID",
+            toType = c("ENTREZID", "SYMBOL"),
+            OrgDb = org.Hs.eg.db)
+colnames(cc6)<-c("importance","ENTREZID")
+cc6n1<-merge(cc6n,cc6,by=c("ENTREZID"))
+cc6a<-cc6n1[order(cc6n1$importance),]
+
+write.csv(cc6a, file="rf LUAD xu1 IJS.csv",col.names = T,row.names = F)
+
+
+cc6a$SYMBOL<-factor(cc6a$SYMBOL,levels=cc6a$SYMBOL)
+options(digits=4)
+cc7<-ggplot(cc6a[c((nrow(cc6a)-19):nrow(cc6a)),],aes(x=importance,y=SYMBOL,colour="red",size=importance))+geom_point()+
+  xlab("Importance")+ylab("")+
+  theme_bw()+theme(panel.grid =element_blank())+
+  theme(plot.title=element_text(size=12,
+                                face="bold",colour="black"))+
+  theme(axis.title.x=element_text(size=12,
+                                  face="bold",colour="black"))+
+  theme(axis.text.x=element_text(size=10,face="bold",
+                                 colour="black"))+
+  theme(axis.text.y=element_text(size=12,face="bold",
+                                 colour="black"))+
+  theme(legend.position = "none")
+
+cc7
+ggsave("rf impor IJS.pdf", width=4, height=5)
+
+
+
+
+
+##xgboost算法
+x_label<-ifelse(LA4$OS.status==1,LA4$OS.time,-LA4$OS.time)
+x_train<-as.matrix(LA4[,c(4:ncol(LA4))])
+x_val<-xgb.DMatrix(x_train,
+                   label=x_label)
+xgb_param<-list("objective"="survival:cox",
+                "eval_metric"="cox-nloglik")
+xgb.model<-xgb.train(params=xgb_param,
+                     data=x_val,
+                     nrounds=100,
+                     eta=0.1,
+                     watchlist=list(val2=x_val))
+e<-data.frame(xgb.model$evaluation_log)
+ggplot(aes(x=iter,y=val2_cox_nloglik),data=e)+
+  geom_point(color="pink",size=3)+
+  geom_line()+
+  theme_bw()
+
+#筛选VIP值排名前的基因。
+imp<-xgb.importance(feature_names=colnames(x_train),model=xgb.model)
+write.csv(imp, file="xgboost LUAD xu1 IJS.csv",col.names = T,row.names = F)
+
+
+impK<-imp[1:20,1:2]
+
+imp1<-bitr(impK$Feature, fromType = "ENTREZID",
+           toType = c("ENTREZID", "SYMBOL"),
+           OrgDb = org.Hs.eg.db)
+
+colnames(impK)<-c("ENTREZID","importance")
+imp1a<-merge(impK,imp1,by=c("ENTREZID"))
+imp1b<-imp1a[order(imp1a$importance),]
+
+imp1b$SYMBOL<-factor(imp1b$SYMBOL,levels=imp1b$SYMBOL)
+imp1c<-ggplot(imp1b,aes(x=importance,y=SYMBOL,size=importance))+geom_point(colour="#BFEFFF")+
+  xlab("Importance")+ylab("")+
+  theme_bw()+theme(panel.grid =element_blank())+
+  theme(plot.title=element_text(size=12,
+                                face="bold",colour="black"))+
+  theme(axis.title.x=element_text(size=12,
+                                  face="bold",colour="black"))+
+  theme(axis.text.x=element_text(size=10,face="bold",
+                                 colour="black"))+
+  theme(axis.text.y=element_text(size=12,face="bold",
+                                 colour="black"))+
+  theme(legend.position = "none")
+
+imp1c
+ggsave("xgb impor IJS.pdf", width=4, height=5)
+
+
+
+
+##交集
+core1<-intersect(cc6a[c((nrow(cc6a)-19):nrow(cc6a)),]$ENTREZID,imp[1:20,1:2]$Feature) ##有意义
+imp1h<-bitr(core1, fromType = "ENTREZID",
+           toType = c("ENTREZID", "SYMBOL"),
+           OrgDb = org.Hs.eg.db)
+write.csv(imp1h, file="core1 LUAD xu1 IJS.csv",col.names = T,row.names = F)
+imp1h<-read.table("D:/data/data3/ASPM/Single LUAD/core1 LUAD xu1 IJS.csv",
+                 sep=",",header=TRUE,stringsAsFactors=FALSE)
+core1<-imp1h$ENTREZID
+##评估上述基因的临床意义
+
+##建立Cox模型
+LA4a<-LA4[,c("OS.time","OS.status",core1)]
+
+
+Ge2<-coxph(Surv(OS.time,OS.status)~., data=LA4a)
+Ge2
+summary(Ge2)
+Ge3<-as.data.frame(Ge2$coefficients)
+Ge3$Gene<-core1
+colnames(Ge3)<-c("coef","Gene")
+
+###输出Ge3
+sh1<-Ge3
+colnames(sh1)<-c("coef","ENTREZID")
+sh2<-merge(imp1h,sh1,by=c("ENTREZID"))
+write.csv(sh2, file="D:/data/data3/ASPM/Single LUAD/core1 LUAD xu1 coef IJS.csv",col.names = T,row.names = F)
+
+
+xu1a<-xu1
+rownames(xu1a)<-xu1a$GeneID
+
+xu1b<-as.data.frame(t(xu1a[,-1]))
+
+xu1b[c(1:3),c(1:3)]
+
+xuge<-intersect(Ge3$Gene,colnames(xu1b))
+
+LUAD7<-as.data.frame(t(xu1b[,xuge]))
+
+LUAD7a<-as.data.frame(apply(LUAD7,2,as.numeric))
+
+las4<-as.data.frame(sapply(LUAD7a,function(x)sum(x*Ge3$coef))) ##核查基因和系数是否匹配
+
+las4$Patients<-rownames(las4)
+colnames(las4)<-c("LAS","Patients")
+
+write.csv(las4, file="LUAD Highpro gene signature COX IJS.csv",row.names=F)
+
+
+
+####训练集
+getwd()
+setwd("D:/data/data3/ASPM/Single LUAD")
+##生存分析
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+NS1a<-las4
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+
+
+##all
+lR1a<-subset(lR1,lR1$Histology=="AD",select=c(1:ncol(lR1)))
+
+
+
+##IA
+lR1a<-subset(lR1,lR1$Histology=="AD" &
+               lR1$pStage=="IA",select=c(1:ncol(lR1)))
+
+
+all<-lR1a
+
+
+all$LAS1[all$LAS>=median(all$LAS)]<-"1High"
+all$LAS1[all$LAS<median(all$LAS)]<-"0Low"
+
+table(all$LAS1)
+###生存分析
+lSsurv<-Surv(all$OS.time,all$OS.status)
+all1<-survdiff(Surv(OS.time,OS.status)~LAS1, data=all)#
+all1
+all2<-coxph(Surv(OS.time,OS.status)~LAS1,data=all)
+all2
+summary(all2)
+
+all3<-all[c(1:nrow(all)),]
+allfit1<-survfit(Surv(OS.time,OS.status)~LAS1, data=all3)
+mytheme1<-theme_bw()+theme(panel.grid =element_blank())
+
+allcurve1<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                      legend.labs=c("Low","High"),
+                      palette=c("#F08080","#BFEFFF"),
+                      pval=FALSE,ggtheme=mytheme1,
+                      legend.title="",size=0.4,
+                      legend="top",
+                      title="",xlab="Months",ylab="OS",
+                      font.legend=c(15, "bold", "black"),
+                      font.title=c(15, "bold", "black"),
+                      surv.median.line="hv",
+                      font.x=c(15, "bold", "black"),
+                      font.y=c(15, "bold", "black"),
+                      font.tickslab=c(12, "bold", "black"))
+allcurve1
+
+ggsave("LUAD Hpro OS.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS I.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS II.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IIIIV.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IA.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IB.pdf",width=4, height=4)
+
+
+allcurve1a<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                       legend.labs=c("Low","High"),
+                       palette=c("#F08080","#BFEFFF"),
+                       pval=FALSE,ggtheme=mytheme1,
+                       legend.title="",size=0.4,
+                       legend="top",
+                       title="",xlab="Months",ylab="OS",
+                       font.legend=c(15, "bold", "black"),
+                       font.title=c(15, "bold", "black"),
+                       surv.median.line="hv",
+                       font.x=c(15, "bold", "black"),
+                       font.y=c(15, "bold", "black"),
+                       font.tickslab=c(12, "bold", "black"),
+                       risk.table=TRUE)
+allcurve1a
+
+
+
+
+###验证集
+xu1t<-LUAD6x[,c("GeneID",bc_test)]
+xu1a<-xu1t
+rownames(xu1a)<-xu1a$GeneID
+
+xu1b<-as.data.frame(t(xu1a[,-1]))
+
+xu1b[c(1:3),c(1:3)]
+
+xuge<-intersect(Ge3$Gene,colnames(xu1b))
+
+LUAD7<-as.data.frame(t(xu1b[,xuge]))
+
+LUAD7a<-as.data.frame(apply(LUAD7,2,as.numeric))
+
+las4<-as.data.frame(sapply(LUAD7a,function(x)sum(x*Ge3$coef))) ##核查基因和系数是否匹配
+
+las4$Patients<-rownames(las4)
+colnames(las4)<-c("LAS","Patients")
+
+write.csv(las4, file="LUAD Highpro gene signature COX IJS fy.csv",row.names=F)
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS fy.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+getwd()
+setwd("D:/data/data3/ASPM/Single LUAD")
+##生存分析
+
+NS1a<-las4
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+
+
+##all
+lR1a<-subset(lR1,lR1$Histology=="AD",select=c(1:ncol(lR1)))
+
+
+
+##IA
+lR1a<-subset(lR1,lR1$Histology=="AD" &
+               lR1$pStage=="IA",select=c(1:ncol(lR1)))
+
+
+all<-lR1a
+
+
+all$LAS1[all$LAS>=median(all$LAS)]<-"1High"
+all$LAS1[all$LAS<median(all$LAS)]<-"0Low"
+
+table(all$LAS1)
+###生存分析
+lSsurv<-Surv(all$OS.time,all$OS.status)
+all1<-survdiff(Surv(OS.time,OS.status)~LAS1, data=all)#
+all1
+all2<-coxph(Surv(OS.time,OS.status)~LAS1,data=all)
+all2
+summary(all2)
+
+all3<-all[c(1:nrow(all)),]
+allfit1<-survfit(Surv(OS.time,OS.status)~LAS1, data=all3)
+mytheme1<-theme_bw()+theme(panel.grid =element_blank())
+
+allcurve1<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                      legend.labs=c("Low","High"),
+                      palette=c("#F08080","#BFEFFF"),
+                      pval=FALSE,ggtheme=mytheme1,
+                      legend.title="",size=0.4,
+                      legend="top",
+                      title="",xlab="Months",ylab="OS",
+                      font.legend=c(15, "bold", "black"),
+                      font.title=c(15, "bold", "black"),
+                      surv.median.line="hv",
+                      font.x=c(15, "bold", "black"),
+                      font.y=c(15, "bold", "black"),
+                      font.tickslab=c(12, "bold", "black"))
+allcurve1
+
+ggsave("LUAD Hpro OS.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS I.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS II.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IIIIV.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IA.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IB.pdf",width=4, height=4)
+
+
+allcurve1a<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                       legend.labs=c("Low","High"),
+                       palette=c("#F08080","#BFEFFF"),
+                       pval=FALSE,ggtheme=mytheme1,
+                       legend.title="",size=0.4,
+                       legend="top",
+                       title="",xlab="Months",ylab="OS",
+                       font.legend=c(15, "bold", "black"),
+                       font.title=c(15, "bold", "black"),
+                       surv.median.line="hv",
+                       font.x=c(15, "bold", "black"),
+                       font.y=c(15, "bold", "black"),
+                       font.tickslab=c(12, "bold", "black"),
+                       risk.table=TRUE)
+allcurve1a
+
+
+
+
+dev.off()
+
+
+####外部数据集验证
+
+
+xu1t<-LUAD6y
+xu1a<-xu1t
+rownames(xu1a)<-xu1a$GeneID
+
+xu1b<-as.data.frame(t(xu1a[,-1]))
+
+xu1b[c(1:3),c(1:3)]
+
+xuge<-intersect(Ge3$Gene,colnames(xu1b))
+
+LUAD7<-as.data.frame(t(xu1b[,xuge]))
+
+LUAD7a<-as.data.frame(apply(LUAD7,2,as.numeric))
+
+las4<-as.data.frame(sapply(LUAD7a,function(x)sum(x*Ge3$coef))) ##核查基因和系数是否匹配
+
+las4$Patients<-rownames(las4)
+colnames(las4)<-c("LAS","Patients")
+
+write.csv(las4, file="LUAD Highpro gene signature COX IJS wb.csv",row.names=F)
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS wb.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+getwd()
+setwd("D:/data/data3/ASPM/Single LUAD")
+##生存分析
+
+NS1a<-las4
+NS1<-read.table("D:/data/data3/ASPM/Single LUAD/NSCLC clinical xiu.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+
+
+##all
+lR1a<-subset(lR1,lR1$Histology=="AD",select=c(1:ncol(lR1)))
+
+
+
+##IA
+lR1a<-subset(lR1,lR1$Histology=="AD" &
+               lR1$pStage=="IA",select=c(1:ncol(lR1)))
+
+
+all<-lR1a
+
+
+all$LAS1[all$LAS>=median(all$LAS)]<-"1High"
+all$LAS1[all$LAS<median(all$LAS)]<-"0Low"
+
+table(all$LAS1)
+###生存分析
+lSsurv<-Surv(all$OS.time,all$OS.status)
+all1<-survdiff(Surv(OS.time,OS.status)~LAS1, data=all)#
+all1
+all2<-coxph(Surv(OS.time,OS.status)~LAS1,data=all)
+all2
+summary(all2)
+
+all3<-all[c(1:nrow(all)),]
+allfit1<-survfit(Surv(OS.time,OS.status)~LAS1, data=all3)
+mytheme1<-theme_bw()+theme(panel.grid =element_blank())
+
+allcurve1<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                      legend.labs=c("Low","High"),
+                      palette=c("#F08080","#BFEFFF"),
+                      pval=FALSE,ggtheme=mytheme1,
+                      legend.title="",size=0.4,
+                      legend="top",
+                      title="",xlab="Months",ylab="OS",
+                      font.legend=c(15, "bold", "black"),
+                      font.title=c(15, "bold", "black"),
+                      surv.median.line="hv",
+                      font.x=c(15, "bold", "black"),
+                      font.y=c(15, "bold", "black"),
+                      font.tickslab=c(12, "bold", "black"))
+allcurve1
+
+ggsave("LUAD Hpro OS.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS I.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS II.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IIIIV.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IA.pdf",width=4, height=4)
+ggsave("LUAD Hpro OS IB.pdf",width=4, height=4)
+
+
+allcurve1a<-ggsurvplot(allfit1,conf.int=FALSE,conf.int.alpha=0.3,conf.int.style="ribbon",
+                       legend.labs=c("Low","High"),
+                       palette=c("#F08080","#BFEFFF"),
+                       pval=FALSE,ggtheme=mytheme1,
+                       legend.title="",size=0.4,
+                       legend="top",
+                       title="",xlab="Months",ylab="OS",
+                       font.legend=c(15, "bold", "black"),
+                       font.title=c(15, "bold", "black"),
+                       surv.median.line="hv",
+                       font.x=c(15, "bold", "black"),
+                       font.y=c(15, "bold", "black"),
+                       font.tickslab=c(12, "bold", "black"),
+                       risk.table=TRUE)
+allcurve1a
+
+
+
+
+dev.off()
+
+
+
+##诺曼图
+library(survival)
+library(survminer)
+library(ggpubr)
+library(magrittr)
+library(ggplot2)
+library(rms)
+library(Hmisc)
+library(lattice)
+library(Formula)
+library(grid)
+
+##构建Nomo图
+## 构建(1) COX比例风险模型
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+NS1a<-las4
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+##all
+lR1a<-subset(lR1,lR1$Histology=="AD",select=c(1:ncol(lR1)))
+
+##IA
+lR1a<-subset(lR1,lR1$Histology=="AD" &
+               lR1$pStage=="IA",select=c(1:ncol(lR1)))
+
+
+mm<-lR1a
+mm1<-mm[,c("OS.time","OS.status","LAS")]
+write.csv(mm1, file="D:/data/data3/ASPM/Single LUAD/mm1S.csv",col.names = T,row.names = F)
+
+
+dd=datadist(mm1)
+options(datadist="dd")
+options(digits=2)
+a1<-cph(Surv(OS.time,OS.status)~LAS,data=mm1,
+        x=T, y=T, surv=T)
+
+
+
+
+## 构建一年生存概率图，注意数据的time是以”月“为单位fun.at=c(0.05,seq(0.1, 0.6, by=0.1), 0.65)
+surv<-Survival(a1)# 构建生存概率函数
+
+##画诺曼图需要dd
+nom1<-nomogram(a1,lp=FALSE,fun=list(function(x) surv(12, x),
+                                    function(x) surv(12*3, x),
+                                    function(x) surv(12*5, x)),
+
+               funlabel=c("1-year OS probability",
+                          "3-year OS probability",
+                          "5-year OS probability"))
+plot(nom1)
+
+pdf("IJS all OS Hprosig nomo.pdf",width=8.5, height=5)
+pdf("IJS IA OS Hprosig nomo.pdf",width=8.5, height=5)
+
+p1<-plot(nom1,xfrac=0.3, font.var=4,col.var="red",
+         cex.axis=0.6,cex.var=0.85,col.grid = gray(c(0.8, 0.95)))
+p1
+dev.off()
+
+
+###使用上述cox模型预测test数据集生存概率
+
+library(pec) ##验证模型
+library(rms)  ##拟合生存分析模型
+library(survival)  ##生存分析包
+library(glmnet)  ##Lasso回归包
+
+
+###训练集
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+NS1a<-las4
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+###测试集
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS fy.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+NS1a<-las4
+NS1<-read.table("D:/data/data16/NSCLC clinical.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+###外部验证集
+las4<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD Highpro gene signature COX IJS wb.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+NS1a<-las4
+NS1<-read.table("D:/data/data3/ASPM/Single LUAD/NSCLC clinical xiu.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+lR1<-merge(NS1,NS1a,by=c("Patients"))
+
+
+
+
+##all
+lR1a<-subset(lR1,lR1$Histology=="AD",select=c(1:ncol(lR1)))
+
+
+##IA
+lR1a<-subset(lR1,lR1$Histology=="AD" &
+               lR1$pStage=="IA",select=c(1:ncol(lR1)))
+
+
+
+testsu<-lR1a
+testsu1<-testsu[,c("OS.time","OS.status","LAS")]
+
+##无需预测数据的生存数据
+##测试时选用testsu<-mm1
+testsu1<-as.data.frame(testsu[,c("LAS")])
+colnames(testsu1)<-c("LAS")
+
+rownames(testsu1)<-testsu$Patients
+
+t <- c(1*12,3*12,5*12)
+survprob <- predictSurvProb(a1,newd=testsu1,times=t) ##预测不需要dd
+head(survprob)
+
+survprob1<-as.data.frame(survprob)
+survprob1$Patients<-rownames(survprob1)
+
+##5年
+LUAD5p<-testsu
+LUAD5p$Typesur[LUAD5p$OS.time > 60]<-"Low risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 60 & LUAD5p$OS.status=="1"]<-"High risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 60 & LUAD5p$OS.status=="0"]<-"Unknow"
+table(LUAD5p$Typesur)
+zhe0<-merge(survprob1,LUAD5p,by=c("Patients"))
+zhe1<-subset(zhe0,zhe0$Typesur!="Unknow",select=c(1:ncol(zhe0)))
+
+
+zhe2<-roc(zhe1$Typesur,zhe1$`60`)
+auc(zhe2)###  
+pROC::ci(zhe2)#
+
+pdf("all LUAD roc IJS xu five.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu five ce.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu five wb.pdf",width=5, height=5)
+
+pdf("IA LUAD roc IJS xu five.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu five ce.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu five wb.pdf",width=5, height=5)
+
+
+plot(zhe2,print.auc=FALSE, auc.polygon=TRUE, max.auc.polygon=TRUE,
+     auc.polygon.col="#EED5D2", print.thres=TRUE,font=2,
+     main="",cex.main=2,
+     font.lab=2,font.axis=2,cex.lab=1.8,cex.axis=1.4)
+text(0.45,0.1,paste0("AUC:",format(ci(roc(zhe1$Typesur,zhe1$`60`))[2],digits=3),
+                     "\n 95% CI:",
+                     format(ci(roc(zhe1$Typesur,zhe1$`60`))[1],digits=3),
+                     "-",format(ci(roc(zhe1$Typesur,zhe1$`60`))[3],digits=3)),
+     cex=1.6,font=2)
+
+dev.off()
+
+
+
+
+##3年
+LUAD5p<-testsu
+LUAD5p$Typesur[LUAD5p$OS.time > 36]<-"Low risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 36 & LUAD5p$OS.status=="1"]<-"High risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 36 & LUAD5p$OS.status=="0"]<-"Unknow"
+table(LUAD5p$Typesur)
+zhe0<-merge(survprob1,LUAD5p,by=c("Patients"))
+zhe1<-subset(zhe0,zhe0$Typesur!="Unknow",select=c(1:ncol(zhe0)))
+
+
+zhe2<-roc(zhe1$Typesur,zhe1$`36`)
+auc(zhe2)###  
+pROC::ci(zhe2)#
+
+pdf("all LUAD roc IJS xu three.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu three ce.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu three wb.pdf",width=5, height=5)
+
+pdf("IA LUAD roc IJS xu three.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu three ce.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu three wb.pdf",width=5, height=5)
+
+plot(zhe2,print.auc=FALSE, auc.polygon=TRUE, max.auc.polygon=TRUE,
+     auc.polygon.col="#EED5D2", print.thres=TRUE,font=2,
+     main="",cex.main=2,
+     font.lab=2,font.axis=2,cex.lab=1.8,cex.axis=1.4)
+text(0.45,0.1,paste0("AUC:",format(ci(roc(zhe1$Typesur,zhe1$`36`))[2],digits=3),
+                     "\n 95% CI:",
+                     format(ci(roc(zhe1$Typesur,zhe1$`36`))[1],digits=3),
+                     "-",format(ci(roc(zhe1$Typesur,zhe1$`36`))[3],digits=3)),
+     cex=1.6,font=2)
+
+dev.off()
+
+
+
+##1年
+LUAD5p<-testsu
+LUAD5p$Typesur[LUAD5p$OS.time > 12]<-"Low risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 12 & LUAD5p$OS.status=="1"]<-"High risk"
+LUAD5p$Typesur[LUAD5p$OS.time < 12 & LUAD5p$OS.status=="0"]<-"Unknow"
+table(LUAD5p$Typesur)
+zhe0<-merge(survprob1,LUAD5p,by=c("Patients"))
+zhe1<-subset(zhe0,zhe0$Typesur!="Unknow",select=c(1:ncol(zhe0)))
+
+
+zhe2<-roc(zhe1$Typesur,zhe1$`12`)
+auc(zhe2)###  
+pROC::ci(zhe2)#
+pdf("all LUAD roc IJS xu one.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu one ce.pdf",width=5, height=5)
+pdf("all LUAD roc IJS xu one wb.pdf",width=5, height=5)
+
+pdf("IA LUAD roc IJS xu one.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu one ce.pdf",width=5, height=5)
+pdf("IA LUAD roc IJS xu one wb.pdf",width=5, height=5)
+
+
+plot(zhe2,print.auc=FALSE, auc.polygon=TRUE, max.auc.polygon=TRUE,
+     auc.polygon.col="#EED5D2", print.thres=TRUE,font=2,
+     main="",cex.main=2,
+     font.lab=2,font.axis=2,cex.lab=1.8,cex.axis=1.4)
+text(0.45,0.1,paste0("AUC:",format(ci(roc(zhe1$Typesur,zhe1$`12`))[2],digits=3),
+                     "\n 95% CI:",
+                     format(ci(roc(zhe1$Typesur,zhe1$`12`))[1],digits=3),
+                     "-",format(ci(roc(zhe1$Typesur,zhe1$`12`))[3],digits=3)),
+     cex=1.6,font=2)
+
+dev.off()
+
+
+
+
+
+
+###开发R包
+library(devtools)
+setwd("D:/data/data3/ASPM/Single LUAD/packages")
+
+##在Rstudio里创建新软件包HpSur
+
+coef<-read.table("D:/data/data3/ASPM/Single LUAD/core1S.csv",
+                  sep=",",header=TRUE,stringsAsFactors=FALSE)
+mm1<-read.table("D:/data/data3/ASPM/Single LUAD/mm1S.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+
+##测试
+
+x<-LUAD5[[1]][,-1]
+
+HpSur1<-function(x){
+  x<-x[as.character(coef$Gene),]
+  x<-as.data.frame(apply(x,2,as.numeric))
+  x<-as.data.frame(sapply(x,function(y)sum(y*(coef$coef))))
+  x$Patients<-rownames(x)
+  colnames(x)<-c("LAS","Patients")
+
+  dd=rms::datadist(mm1)
+  options(rms::datadist="dd")
+  options(digits=2)
+  a1<-rms::cph(survival::Surv(OS.time,OS.status)~LAS,data=mm1,
+               x=T, y=T, surv=T)
+  t <- c(1*12,3*12,5*12)
+  newd<-as.data.frame(x[,-2])
+  colnames(newd)<-"LAS"
+  rownames(newd)<-x$Patients
+  survprob <- pec::predictSurvProb(a1,newd=newd,times=t)
+  survprob1<-as.data.frame(survprob)
+  colnames(survprob1)<-c("1-Year OS","3-Year OS","5-Year OS")
+  survprob1
+}
+
+head(HpSur1(k))
+##正确输出
+
+
+###由于HpSur2预测IA高低危分型始终是IA-high-risk，所以暂时不上传HpSur2函数
+ss1a<-read.table("D:/data/data3/ASPM/Single LUAD/LUAD IA survival c1.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+rownames(ss1a)<-ss1a$Type
+ss1<-as.data.frame(t(ss1a))
+
+x<-LUAD5[[10]][,-1]
+
+
+HpSur2<-function(x){
+  set.seed(125609)
+  x<-x[colnames(ss1[,-1]),]
+  Fit1 = caret::train(ss1[,-1],ss1$Type,method ="rf")
+  predictions1 <- predict(Fit1, newdata = t(x),type="prob")
+  predictions_df <- as.data.frame(predictions1)
+  result_df1 <- data.frame(Predicted = ifelse(predictions_df$`High risk` > 0.5, "high.risk", "low.risk"),names=rownames(predictions_df))
+  colnames(result_df1)<-c("Type","Patients")
+  result_df1<-result_df1[,c(2,1)]
+  result_df1
+
+}
+
+
+head(HpSur2(x))
+
+##正确输出
+
+
+library(devtools)
+setwd("D:/data/data3/ASPM/Single LUAD/packages/HSurADs")
+
+##在Rstudio里创建新软件包HSurAD
+
+##读入两个内置数据集
+coef<-read.table("D:/data/data3/ASPM/Single LUAD/core1S.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+mm1<-read.table("D:/data/data3/ASPM/Single LUAD/mm1S.csv",sep=",",header=TRUE,stringsAsFactors=FALSE)
+
+##或者不设置，自动界面就是这个目录
+##将内置数据写入HSurAD中的data文件夹，成为.rda
+usethis::use_data(coef)
+usethis::use_data(mm1)
+
+##调用其他R包
+usethis::use_package("rms")
+usethis::use_package("pec")
+usethis::use_package("survival")
+
+
+
+devtools::install_github("XiongYL0101/HSurADs")
+
+library(HSurAD)
+
+
+
+??HSurAD
+?HpSurAD
+
+
+help(package="HSurAD")
+help(HSurAD)
+
+##测试
+##输入肺腺癌数据集
+setwd("D:/data/data16/singlegene")
+LUAD1<-list.files(pattern="\\RNA matrix.csv")
+LUAD2<-as.data.frame(LUAD1)
+LUAD3<-tidyr::separate(LUAD2,LUAD1,into=c("Dataset")," ")
+for(i in seq_along(LUAD3$Dataset))
+  assign(LUAD3$Dataset[i], read.table(LUAD1[i], sep = ",", header = TRUE))
+
+LUAD4<-list(GSE13213,GSE26939,GSE30219,GSE31210,GSE41271,GSE42127,
+            GSE50081,GSE63459,GSE68465,GSE68571,GSE72094,TCGALUAD)
+for(i in seq_along(LUAD4)){rownames(LUAD4[[i]])<-(LUAD4[[i]])[,1]}
+
+##对每一个数据集进行Z转化
+LUAD5<-lapply(LUAD4,function(x)as.data.frame(t(scale(t(x[,-1])))))
+
+for(i in seq_along(LUAD5)){ LUAD5[[i]]$GeneID <- rownames(LUAD5[[i]])}
+for(i in seq_along(LUAD5)){ LUAD5[[i]] <- (LUAD5[[i]])[,c("GeneID",colnames(LUAD5[[i]])[1:(length(colnames(LUAD5[[i]]))-1)])]}
+
+##所有
+x<-LUAD5[[3]][,-1]
+
+
+
+library(HSurAD)
+
+HpSurAD(x)
+

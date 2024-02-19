@@ -1,0 +1,17 @@
+Package: HSurADs
+Type: Package
+Title: HSurADs is used for predicting the survival rate of lung adenocarcinoma patient especially early-stage lung adenocarcinoma
+Version: 0.1.0
+Author: person("YANLU","Xiong",email="xiong21@fmmu.edu.cn",role =c("aut","cre") )
+Maintainer: The package maintainer <xiong21@fmmu.edu.cn>
+Description: HSurADs is used for predicting the survival rate of lung adenocarcinoma patients
+License: MIT
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 2.10)
+RoxygenNote: 7.2.0
+Imports: 
+    pec,
+    rms,
+    survival
